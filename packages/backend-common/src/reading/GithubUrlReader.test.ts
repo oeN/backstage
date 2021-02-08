@@ -21,6 +21,7 @@ import fs from 'fs-extra';
 import mockFs from 'mock-fs';
 import { rest } from 'msw';
 import { setupServer } from 'msw/node';
+import os from 'os';
 import path from 'path';
 import { NotFoundError, NotModifiedError } from '../errors';
 import {
@@ -56,10 +57,21 @@ const gheProcessor = new GithubUrlReader(
   { treeResponseFactory, credentialsProvider: mockCredentialsProvider },
 );
 
+const tmpDir = os.platform() === 'win32' ? 'C:\\tmp' : '/tmp';
+
 describe('GithubUrlReader', () => {
   const worker = setupServer();
-
   msw.setupDefaultHandlers(worker);
+
+  beforeEach(() => {
+    mockFs({
+      [tmpDir]: mockFs.directory(),
+    });
+  });
+
+  afterEach(() => {
+    mockFs.restore();
+  });
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -122,16 +134,6 @@ describe('GithubUrlReader', () => {
    */
 
   describe('readTree', () => {
-    beforeEach(() => {
-      mockFs({
-        '/tmp': mockFs.directory(),
-      });
-    });
-
-    afterEach(() => {
-      mockFs.restore();
-    });
-
     const repoBuffer = fs.readFileSync(
       path.resolve(
         'src',
@@ -414,14 +416,6 @@ describe('GithubUrlReader', () => {
    */
 
   describe('search', () => {
-    beforeEach(() => {
-      mockFs({ '/tmp': mockFs.directory() });
-    });
-
-    afterEach(() => {
-      mockFs.restore();
-    });
-
     const repoBuffer = fs.readFileSync(
       path.resolve(
         'src',

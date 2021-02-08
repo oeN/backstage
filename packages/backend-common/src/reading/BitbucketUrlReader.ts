@@ -24,13 +24,16 @@ import {
 } from '@backstage/integration';
 import fetch from 'cross-fetch';
 import parseGitUrl from 'git-url-parse';
+import { Minimatch } from 'minimatch';
 import { Readable } from 'stream';
 import { NotFoundError, NotModifiedError } from '../errors';
 import { ReadTreeResponseFactory } from './tree';
+import { stripFirstDirectoryFromPath } from './tree/util';
 import {
   ReaderFactory,
   ReadTreeOptions,
   ReadTreeResponse,
+  SearchOptions,
   SearchResponse,
   UrlReader,
 } from './types';
@@ -130,8 +133,25 @@ export class BitbucketUrlReader implements UrlReader {
     });
   }
 
-  async search(): Promise<SearchResponse> {
-    throw new Error('BitbucketUrlReader does not implement search');
+  async search(url: string, options?: SearchOptions): Promise<SearchResponse> {
+    const { filepath } = parseGitUrl(url);
+    const matcher = new Minimatch(filepath);
+
+    // TODO(freben): For now, read the entire repo and filter through that. In
+    // a future improvement, we could be smart and try to deduce that non-glob
+    // prefixes (like for filepaths such as some-prefix/**/a.yaml) can be used
+    // to get just that part of the repo.
+    const treeUrl = url.replace(filepath, '').replace(/\/+$/, '');
+
+    const tree = await this.readTree(treeUrl, {
+      etag: options?.etag,
+      filter: path => matcher.match(stripFirstDirectoryFromPath(path)),
+    });
+
+    return {
+      etag: tree.etag,
+      files: await tree.files(),
+    };
   }
 
   toString() {

@@ -20,6 +20,7 @@ import fs from 'fs-extra';
 import mockFs from 'mock-fs';
 import { rest } from 'msw';
 import { setupServer } from 'msw/node';
+import os from 'os';
 import path from 'path';
 import { getVoidLogger } from '../logging';
 import { GitlabUrlReader } from './GitlabUrlReader';
@@ -48,7 +49,19 @@ const hostedGitlabProcessor = new GitlabUrlReader(
   { treeResponseFactory },
 );
 
+const tmpDir = os.platform() === 'win32' ? 'C:\\tmp' : '/tmp';
+
 describe('GitlabUrlReader', () => {
+  beforeEach(() => {
+    mockFs({
+      [tmpDir]: mockFs.directory(),
+    });
+  });
+
+  afterEach(() => {
+    mockFs.restore();
+  });
+
   const worker = setupServer();
   msw.setupDefaultHandlers(worker);
 
@@ -154,16 +167,6 @@ describe('GitlabUrlReader', () => {
   });
 
   describe('readTree', () => {
-    beforeEach(() => {
-      mockFs({
-        '/tmp': mockFs.directory(),
-      });
-    });
-
-    afterEach(() => {
-      mockFs.restore();
-    });
-
     const archiveBuffer = fs.readFileSync(
       path.resolve('src', 'reading', '__fixtures__', 'gitlab-archive.zip'),
     );
@@ -390,6 +393,80 @@ describe('GitlabUrlReader', () => {
           { treeResponseFactory },
         );
       }).toThrowError('must configure an explicit apiBaseUrl');
+    });
+  });
+
+  describe('search', () => {
+    const archiveBuffer = fs.readFileSync(
+      path.resolve('src', 'reading', '__fixtures__', 'gitlab-archive.zip'),
+    );
+
+    const projectGitlabApiResponse = {
+      id: 11111111,
+      default_branch: 'main',
+    };
+
+    const branchGitlabApiResponse = {
+      commit: {
+        id: 'sha123abc',
+      },
+    };
+
+    beforeEach(() => {
+      worker.use(
+        rest.get(
+          'https://gitlab.com/api/v4/projects/backstage%2Fmock/repository/archive.zip?sha=main',
+          (_, res, ctx) =>
+            res(
+              ctx.status(200),
+              ctx.set('Content-Type', 'application/zip'),
+              ctx.set(
+                'content-disposition',
+                'attachment; filename="mock-main-sha123abc.zip"',
+              ),
+              ctx.body(archiveBuffer),
+            ),
+        ),
+        rest.get(
+          'https://gitlab.com/api/v4/projects/backstage%2Fmock',
+          (_, res, ctx) =>
+            res(
+              ctx.status(200),
+              ctx.set('Content-Type', 'application/json'),
+              ctx.json(projectGitlabApiResponse),
+            ),
+        ),
+        rest.get(
+          'https://gitlab.com/api/v4/projects/backstage%2Fmock/repository/branches/main',
+          (_, res, ctx) =>
+            res(
+              ctx.status(200),
+              ctx.set('Content-Type', 'application/json'),
+              ctx.json(branchGitlabApiResponse),
+            ),
+        ),
+      );
+    });
+
+    it('works for the naive case', async () => {
+      const result = await gitlabProcessor.search(
+        'https://gitlab.com/backstage/mock/tree/main/**/index.*',
+      );
+      expect(result.etag).toBe('sha123abc');
+      expect(result.files.length).toBe(1);
+      expect(result.files[0].path).toBe('docs/index.md');
+      await expect(result.files[0].content()).resolves.toEqual(
+        Buffer.from('# Test\n'),
+      );
+    });
+
+    it('throws NotModifiedError when same etag', async () => {
+      await expect(
+        gitlabProcessor.search(
+          'https://gitlab.com/backstage/mock/tree/main/**/index.*',
+          { etag: 'sha123abc' },
+        ),
+      ).rejects.toThrow(NotModifiedError);
     });
   });
 });
