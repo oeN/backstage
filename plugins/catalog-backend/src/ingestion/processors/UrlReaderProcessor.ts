@@ -62,11 +62,13 @@ export class UrlReaderProcessor implements CatalogProcessor {
     try {
       const output = await this.doRead(location.target);
       for (const item of output) {
-        for await (const parseResult of parser({
-          data: item.data,
-          location: { type: location.type, target: item.url },
-        })) {
-          emit(parseResult);
+        if (item.url !== location.target) {
+          for await (const parseResult of parser({
+            data: item.data,
+            location: { type: location.type, target: item.url },
+          })) {
+            emit(parseResult);
+          }
         }
       }
     } catch (error) {
